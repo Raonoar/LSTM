@@ -1,0 +1,187 @@
+clear; 
+close all;
+
+Mpath = "/Users/";
+
+datalength = 100;
+RMSEwidth = 50; 
+
+subject = "A";
+sw_anime = true;
+
+%%
+file = "normal_" + subject + ".mat";
+
+switch subject
+    case "A"
+        load acc_00954.mat
+        range = 406:1204; % A 954
+    case "B"
+       load acc_00992.mat
+       range = 648:1448; % B 992
+end
+
+load(fullfile(Mpath, file), "net", "muX", "sigmaX", "muT", "sigmaT");
+
+% Acc : Acceleration (timestep, dim)
+dt = 0.01;
+Acc = Acc;
+Acc = Acc(range,:);
+
+t = (1:size(Acc, 1))'*dt;
+
+Nframe = size(Acc, 1);
+Target = 3; 
+
+YLim = [-5 5];
+
+[movfile, movpath] = uiputfile("*.mp4", "Select directory and Setting movie name");
+if movfile == 0
+    sw_savemov = false;
+else
+    sw_savemov = true;
+    mov = VideoWriter(fullfile(movpath, movfile), "MPEG-4");
+    mov.FrameRate = round(1/(t(2)-t(1)));
+    mov.Quality = 100;
+    open(mov);
+end
+
+%%
+dt = 0.01;
+t = (1:size(Acc, 1))'*dt;
+fig = f_setOuterPosition([1 1], 1, 1, 1, figure);
+
+subplot(2, 1, 1);
+% hdetect = plot(NaN, NaN, "g", "LineWidth", 1, "DisplayName", "Detect");
+hold on
+hraw = plot(NaN, NaN, "b-", "LineWidth", 4, "DisplayName", "Raw data");
+hpredict = plot(NaN, NaN, "r--", "LineWidth", 4, "DisplayName", "Prediction");
+hcurrent = xline(NaN, "k", "DisplayName", "Current", "LineWidth", 3);
+xlim([0 t(end)]);
+ylim([-5 5]);
+set(gca, "FontName", "Arial", "FontSize", 32);
+xlabel("Time [s]");
+ylabel(["Normalized" ,"acceleration [-]"]);
+legend('FontSize',32);
+box on
+
+subplot(2, 1, 2);
+% hdetect2 = plot(NaN, NaN, "g", "LineWidth", 1, "DisplayName", "Detect");
+hold on
+hrmse = plot(NaN, NaN, "m", "LineWidth", 4, "DisplayName", "RMSE");
+hcurrent2 = xline(NaN, "k", "DisplayName", "Current", "LineWidth", 3);
+yline(1.3062451,'Color',"#0072BD", 'LineWidth', 5, "DisplayName", "Threshold");
+% yline(threshold, "k.", "DisplayName", "Threshold");
+xlim([0 t(end)]);
+ylim([0 2]);
+xlabel("Time [s]");
+ylabel("RMSE [-]");
+set(gca, "FontName", "Arial", "FontSize", 32);
+legend('FontSize',32);
+ytickformat("%.1f")
+box on
+
+f = gcf;
+f.Color = "w";
+
+%%
+k = 0;
+RMSE = zeros(Nframe, 1);
+Acc_predict = nan(Nframe, 1);
+for frame = 1:Nframe
+    if sw_anime 
+        hcurrent.Value = t(frame);
+        hcurrent2.Value = t(frame);
+        hraw.XData = t(1:frame);
+        hraw.YData = Acc(1:frame, Target);
+    end
+    if k > 0
+        if frame-datalength < RMSEwidth
+            width = k;
+        else
+            width = RMSEwidth;
+        end
+       
+        RMSE(frame) = rmse(Acc_predict(frame-width+1:frame, 1), Acc(frame-width+1:frame, Target));
+        if sw_anime
+            hrmse.XData = t(1:frame);
+            hrmse.YData = RMSE(1:frame);
+        end
+        % 
+        % if RMSE(frame) > threshold
+        %     detect = cat(1, detect, frame);
+        %     hdetect.XData = [NaN; repelem(t(detect), 3, 1)];
+        %     hdetect.YData = [hdetect.YData, YLim NaN];
+        %     hdetect2.XData = [NaN; repelem(t(detect), 3, 1)];
+        %     hdetect2.YData = [hdetect2.YData, YLim NaN];
+        % end
+        k = k + 1;
+    end
+
+    if rem(frame, datalength) == 0 && frame~=Nframe
+        %% Predict
+        
+
+        net = resetState(net);
+        [net, Z] = predictAndUpdateState(net, Acc(frame-datalength+1:frame, :)'); 
+        numPredictionTimeSteps = datalength;
+
+        Xt = Z(:, end);
+        Y = zeros(3, numPredictionTimeSteps);
+
+        for i = 1:numPredictionTimeSteps
+            [net, Y(:,i)] = predictAndUpdateState(net, Xt);
+            Xt = Y(:,i);
+        end
+        if Nframe-frame >= datalength
+            Acc_predict(frame+(1:datalength), 1) = Y(Target, :)';
+        else
+            Acc_predict(frame+1:end, 1) = Y(Target, 1:Nframe-frame)';
+        end
+
+        if sw_anime
+            
+            if Nframe-frame >= datalength
+                hpredict.XData = t(1:frame+datalength);
+                hpredict.YData = Acc_predict(1:frame+datalength, 1);
+            else
+                hpredict.XData = t;
+                hpredict.YData = Acc_predict;
+            end
+
+        end
+        
+        k = 1;
+    end
+   
+    drawnow
+    if sw_savemov
+        writeVideo(mov, getframe(fig));
+    end
+end
+if ~sw_anime
+    hraw.XData = t;
+    hraw.YData = Acc(1:end, Target);
+    hrmse.XData = t;
+    hrmse.YData = RMSE;
+    % if ~isempty(detect)
+    %     hdetect.XData = [NaN; repelem(t(detect), 3, 1)];
+    %     hdetect.YData = [hdetect.YData, YLim NaN];
+    %     hdetect2.XData = [NaN; repelem(t(detect), 3, 1)];
+    %     hdetect2.YData = [hdetect2.YData, YLim NaN];
+    % end
+    hpredict.XData = t;
+    hpredict.YData = Acc_predict;
+end
+legend(subplot(2, 1, 1));
+legend(subplot(2, 1, 2));
+if sw_savemov
+    close(mov);
+end
+
+
+peak_rmse = findpeaks(RMSE);
+[~, index_peak] = findpeaks(RMSE);
+max_rmse = max(RMSE);
+
+save("normal_rmse_max_" + subject + ".mat", "max_rmse");
