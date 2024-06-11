@@ -1,0 +1,106 @@
+% Acceleration, Gyro, Mag
+
+clear;
+close all;
+
+subject = "A";
+
+switch subject
+        case "A" % 954 964
+            path = "/Users/";
+    end
+
+[file, path] = uigetfile(fullfile(path,"*.csv"));
+
+Data = importdata(fullfile(path,file),",",13);
+data = Data.data;
+
+t = data(:, 1); % 時間 [deg]
+
+% acceleration
+figure("Name", "Acceleration [G]");
+for i = 1:5
+    sensori = (data(:,(9*i-7):(9*i-5)));
+    sensori_size = sqrt(sum(sensori.^2, 2));
+    subplot(5,1,i);
+    plot(t,sensori);
+    hold on
+    plot(t, sensori_size);
+    xlabel("Time [s]")
+    ylabel("Sensor" + i)
+    legend('x','y','z','mag.')
+    % xlim([0 20])
+end
+
+% gyro
+figure("Name", "Angular Velocity [deg/s]");
+for i = 1:5
+    sensori = (data(:,(9*i-4):(9*i-2)));
+    sensori_size = sqrt(sum(sensori.^2, 2));
+    subplot(5,1,i);
+    plot(t,sensori);
+    hold on
+    plot(t, sensori_size);
+    xlabel("Time [s]")
+    ylabel("Sensor" + i)
+    legend('x','y','z','mag.')
+    xlim([0 20])
+end
+
+% compass
+figure("Name", "Compass [\mu]");
+for i = 1:5
+    sensori = (data(:,(9*i-1):(9*i+1)));
+    sensori_size = sqrt(sum(sensori.^2, 2));
+    subplot(5,1,i);
+    plot(t,sensori);
+    hold on
+    plot(t, sensori_size);
+    xlabel("Time [s]")
+    ylabel("Sensor" + i)
+    legend('x','y','z','mag.')
+    xlim([0 20])
+end
+
+figure("Name", "Acceleration [G], sensor3");
+sensor3 = (data(:,(9*3-7):(9*3-5)));
+sensor3_size = sqrt(sum(sensor3.^2, 2));
+plot(t,sensor3);
+hold on
+plot(t, sensor3_size);
+xlabel("Time [s]")
+ylabel("Sensor" + 3)
+legend('x','y','z','mag.')
+set(gca, "FontName", "Times New Roman", "FontSize", 32);
+hold off
+
+Fs = 100;
+A = data;
+[b,a]=butter(3, 8/(Fs/2));
+Af = filtfilt(b, a, A);
+
+sensor3_Af = Af(:,20:22);
+
+Mpath = "/Users/";
+
+file2 = "normal_" + subject + ".mat";
+load(fullfile(Mpath, file2), "net", "muX", "sigmaX", "muT", "sigmaT");
+
+Input = (sensor3_Af - muX') ./ sigmaX';
+
+figure("Name", "noise, normalize");
+for i = 1:3
+    subplot(3, 1, i)
+    plot(t, Input(:, i));
+    xlabel("Time [s]")
+    ylabel("Acceleration [G]")
+    % switch subject
+    %     case "A"
+    %         xline(7.40)
+    %     case "B"
+    %         xline(7.76)
+    % end
+end
+
+Acc = Input(:, 1:3);
+save("Labacc_" + extractBefore(extractAfter(file, "TEST"), ".csv") + ".mat", "Acc");
