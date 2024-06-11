@@ -1,0 +1,75 @@
+clear;
+close all;
+
+subject = "A";
+
+switch subject
+    case "A"
+        path = "/Users/";
+        file_prefix = "";
+        ds = fileDatastore(fullfile(path, file_prefix + "*.csv"), "ReadFcn", @f_read);
+        data = readall(ds);
+        range = [1:30];
+    case "B"
+        path = "/Users/";
+        file_prefix = "";
+        ds = fileDatastore(fullfile(path, file_prefix + "*.csv"), "ReadFcn", @f_read);
+        data = readall(ds);
+        range = [36:65];
+end
+
+
+data = data(range);
+filename = ds.Files(range);
+
+Fs = 100;
+A = cell2mat(data)';
+
+%%
+[b,a]=butter(3, 8/(Fs/2));
+Af = filtfilt(b, a, A);
+
+figure(1);
+plot(A(:, 84), "b",'DisplayName','original'); % 1*3 = 1st file, z-axis
+hold on
+plot(Af(:, 84),"r",'DisplayName','filtered');
+legend
+
+figure(2);
+plot(Af(:, 84),"r",'DisplayName','filtered');
+legend
+
+figure(3);
+subplot(2,1,1)
+plot(A(:, 84), "b",'DisplayName','original');
+hold on
+plot(Af(:, 84),"r",'DisplayName','filtered');
+legend
+% ylim([-3 2])
+
+subplot(2,1,2)
+plot(Af(:, 84),"r",'DisplayName','filtered');
+legend
+% ylim([-3 2])
+
+switch subject
+    case "A"
+        for i = 1:30
+            file{i} = (Af(406:1204,(3*i-2):(3*i)))';
+        end
+    case "B"
+        % B 일반보행 학습모델 (30)
+        for i = 1:30
+            file{i} = (Af(648:1448,(3*i-2):(3*i)))';
+        end
+end
+
+save("normal_" + subject + ".mat", "file");
+
+function data = f_read(file)
+    Data = importdata(file,",",13);
+    data = Data.data;
+    
+    data = data(:, 20:22)';
+  
+end
