@@ -1,0 +1,230 @@
+
+clear; 
+close all;
+
+%%
+path = "/Users/";
+addpath '/Users/'
+
+t_initial = 3; % Static time [s]
+
+%%
+[file, path] = uigetfile(fullfile(path,"*.csv"));
+Data = fi_load(fullfile(path, file));
+
+%%
+A = Data.Accel; % Acceleration [G]
+W = Data.Gyro; % Angular velocity [deg/s]
+Nf = Data.Nf; % The number of frames
+Ns = Data.Ns; % The number of sensors
+Fs = Data.Fs; % Sampling rate [Hz]
+t = Data.Time;
+
+Fc = 10;
+[b, a] = butter(5, Fc/(Fs/2));
+A = filtfilt(b, a, A - A(1,:)) + A(1, :);
+W = filtfilt(b, a, W - W(1,:)) + W(1, :);
+
+%% Calculation static
+frame_initial = t_initial*Fs; % initial frame
+
+G = mean(A(1:frame_initial, :), 1); % gravity
+
+% Initial Euler (phi, theta) 
+Phi = atan2(G(:, 2:3:end), G(:, 3:3:end));
+Theta = -atan2(G(:, 1:3:end), sqrt(G(:, 2:3:end).^2 + G(:, 3:3:end).^2));
+
+% Euler to Quaternion
+Pos(1, :) = fi_euler2quat(reshape([Phi; Theta], [], 1));
+
+%% Filtering
+% parameter of kalman filter
+Para.w = 0.1^2/180;
+Para.v = 10^0;
+Para.Fs = Fs;
+Para.G = zeros(3*Ns, 1);
+Para.G(3:3:end) = sqrt(G(1:3:end).^2+G(2:3:end).^2+G(3:3:end).^2);
+P = eye(4*Ns);
+% filtering
+for i = 1:Nf
+    [Pos(i+1, :), P] = fi_filter(Pos(i, :), P, A(i, :), W(i, :), Para);
+end
+
+%%
+% Quaternion to Euler (2-dim)
+Euler = fi_quat2euler(Pos, 1);
+
+% Euler to angle (based on Euler)
+EulerDisp = Euler;
+Xaindex = false(size(EulerDisp));
+Xaindex(:, 1:2:end) = Euler(:, 1:2:end)>0;
+EulerDisp(Xaindex) = -2*pi + Euler(Xaindex);
+EulerDisp(:, 1:2:end) = EulerDisp(:, 1:2:end) + pi;
+
+%% 
+Sno = 3;
+axis = 1;
+EulerLabel = ["\it\phi", "\it\theta"];
+UseData = rad2deg(EulerDisp(2:end, 2*(Sno-1)+axis));
+
+[peak_low, index_h] = findpeaks(-UseData,'MinPeakHeight',20);
+peak_low = -peak_low;
+
+index_h = index_h - 1;
+
+figure(1);
+plot(t, UseData)
+hold on
+plot(t(index_h), peak_low, "o");
+xlabel("Time [s]")
+ylabel("Euler")
+title("Sensor " + Sno + ":" + EulerLabel(axis));
+
+initial = index_h(1)
+last = index_h(end)
+
+%% Functions
+function Data = fi_load(file)
+    data = importdata(file, ',', 13);
+    
+    Data.Time = data.data(:, 1);
+
+    Accel = data.data(:, strncmp(data.colheaders, "加速度", 1));
+    Gyro = data.data(:, strncmp(data.colheaders, "ジャイロ", 1));
+    Mag = data.data(:, strncmp(data.colheaders, "地磁気", 1));
+
+    Data.Accel = Accel;
+    Data.Gyro = Gyro;
+    Data.Mag = Mag;
+    
+    % 軸変更 右:x, 後:y，下:z
+    % x = -x_old, y = z_old, z = y_old
+    Data.Accel(:, 1:3:end) = -Accel(:, 1:3:end);
+    Data.Accel(:, 2:3:end) = Accel(:, 3:3:end);
+    Data.Accel(:, 3:3:end) = Accel(:, 2:3:end);
+    Data.Gyro(:, 1:3:end) = -Gyro(:, 1:3:end);
+    Data.Gyro(:, 2:3:end) = Gyro(:, 3:3:end);
+    Data.Gyro(:, 3:3:end) = Gyro(:, 2:3:end);
+    Data.Mag(:, 1:3:end) = -Mag(:, 1:3:end);
+    Data.Mag(:, 2:3:end) = Mag(:, 3:3:end);
+    Data.Mag(:, 3:3:end) = Mag(:, 2:3:end);
+
+    % % SNo1 right hand
+    SNo = 1;
+    Data.Accel(:, 3*SNo-2) = -Data.Accel(:, 3*SNo-1);
+    Data.Accel(:, 3*SNo-1) =  Data.Accel(:, 3*SNo-2);
+    Data.Gyro(:, 3*SNo-2) = -Data.Gyro(:, 3*SNo-1);
+    Data.Gyro(:, 3*SNo-1) = Data.Gyro(:, 3*SNo-2);
+    Data.Mag(:, 3*SNo-2) = -Data.Mag(:, 3*SNo-1);
+    Data.Mag(:, 3*SNo-1) = Data.Mag(:, 3*SNo-2);
+    % SNo2 left hand
+    SNo = 2;
+    Data.Accel(:, 3*SNo-2) =  Data.Accel(:, 3*SNo-1);
+    Data.Accel(:, 3*SNo-1) = -Data.Accel(:, 3*SNo-2);
+    Data.Gyro(:, 3*SNo-2) =  Data.Gyro(:, 3*SNo-1);
+    Data.Gyro(:, 3*SNo-1) = -Data.Gyro(:, 3*SNo-2);
+    Data.Mag(:, 3*SNo-2) = Data.Mag(:, 3*SNo-1);
+    Data.Mag(:, 3*SNo-1) = -Data.Mag(:, 3*SNo-2);
+
+
+    Data.SensorNo = unique(str2double(extractAfter(data.colheaders(2:end), '_')))-157;
+
+    Data.Fs = 1/Data.Time(2);
+    Data.Ns = length(Data.SensorNo);
+    Data.Nf = length(Data.Time);
+end
+function [Pos, P] = fi_filter(Pos, P, A, W, Para)
+    [Pos, P] = fi_state_update(Pos, W, Para, P);
+    [y, H, h, VV] = fi_observe(Pos, A, Para);
+
+    K = P*h'/(h*P*h' + VV);
+    Pos = (Pos + K*(y-H))';
+    P = (eye(length(P))-K*h)*P;
+    Pos = Pos./repelem(sqrt(Pos(1:4:end).^2+Pos(2:4:end).^2+Pos(3:4:end).^2+Pos(4:4:end).^2), 1, 4);
+end
+
+function [F, P] = fi_state_update(Pos, W, Para, P)
+    Fs = Para.Fs;
+    W = deg2rad(W)/Fs/2;
+    Wx = W(1:3:end); Wy = W(2:3:end); Wz = W(3:3:end);
+    Ns = length(Wx);
+    
+    shift = 16*Ns+4;
+    f = eye(4*Ns);
+    f(2:shift:end) = Wx;
+    f(3:shift:end) = Wy;
+    f(4:shift:end) = Wz;
+    f(4*Ns+1:shift:end) = -Wx;
+    f(4*Ns+3:shift:end) = -Wz;
+    f(4*Ns+4:shift:end) = Wy;
+    f(8*Ns+1:shift:end) = -Wy;
+    f(8*Ns+2:shift:end) = Wz;
+    f(8*Ns+4:shift:end) = -Wx;
+    f(12*Ns+1:shift:end) = -Wz;
+    f(12*Ns+2:shift:end) = -Wy;
+    f(12*Ns+3:shift:end) = Wx;
+
+    F = f*Pos';
+    F = F./repelem(sqrt(F(1:4:end).^2+F(2:4:end).^2+F(3:4:end).^2+F(4:4:end).^2), 4, 1);
+
+    VW = Para.w*eye(4*Ns);
+    P = f*P*f' + VW;
+end
+function [y, H, h, VV] = fi_observe(Pos, A, Para)
+    q0 = Pos(1:4:end); q1 = Pos(2:4:end); q2 = Pos(3:4:end); q3 = Pos(4:4:end);
+    R = f_rotation(Pos', 'quat');
+    H = R'*Para.G;
+    y = A';
+
+    g = Para.G(3:3:end);
+
+    Ns = length(q0);
+    shift = 12*Ns+3;
+    h = zeros(length(g)*3, 4*Ns);
+    h(1:shift:end) = -2*g.*q2;
+    h(2:shift:end) =  2*g.*q1;
+    h(3*Ns+1:shift:end) = 2*g.*q3;
+    h(3*Ns+2:shift:end) = 2*g.*q0;
+    h(3*Ns+3:shift:end) = -4*g.*q1;
+    h(6*Ns+1:shift:end) = -2*g.*q0;
+    h(6*Ns+2:shift:end) = 2*g.*q3;
+    h(6*Ns+3:shift:end) = -4*g.*q2;
+    h(9*Ns+1:shift:end) = 2*g.*q1;
+    h(9*Ns+2:shift:end) = 2*g.*q2;
+
+    VV = diag(repmat(Para.v*(sqrt(y(1:3:end).^2+y(2:3:end).^2+y(3:3:end).^2)- Para.G(3:3:end)).^2 + 0.1, 3, 1));
+end
+function Euler = fi_quat2euler(q, index)
+
+    if nargin < 2
+        index = 1;
+    end
+    if index == 2
+        q = q';
+    end
+    
+    q0 = q(:, 1:4:end);
+    q1 = q(:, 2:4:end);
+    q2 = q(:, 3:4:end);
+    q3 = q(:, 4:4:end);
+    
+    Phi = atan2(2*(q2.*q3 + q0.*q1), (1 - 2*(q1.^2 + q2.^2)));
+    Theta = asin(2*(q0.*q2 - q1.*q3));
+    
+    Euler = reshape([Phi; Theta], size(q, 1), []);
+    
+    if index == 2
+        Euler = Euler';
+    end    
+end
+function quat = fi_euler2quat(Euler)
+    Px = Euler(1:2:end)/2;
+    Py = Euler(2:2:end)/2;
+    Ns = length(Px);
+
+    quat = zeros(1, 4*Ns);
+    quat(1:4:end) = cos(Py).*cos(Px);
+    quat(2:4:end) = cos(Py).*sin(Px);
+    quat(3:4:end) = sin(Py).*cos(Px);
+    quat(4:4:end) = -sin(Py).*sin(Px);
+end
